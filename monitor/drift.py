@@ -36,8 +36,12 @@ def compute_drift_report(
     current_lengths: list[int],
 ) -> dict:
     """
-    Returns a drift report dict with per-dimension KS results, PSI on query length,
-    aggregate counts, and a boolean drift_alert.
+    Returns a drift report dict with per-dimension KS results, KS on query length,
+    PSI on query length (for logging), aggregate counts, and a boolean drift_alert.
+
+    Note: PSI is logged but NOT used for alerting — it's too noisy at n=50 per batch.
+    KS test is used for alerting on both embedding dims and query length because
+    it accounts for sample size automatically.
     """
     dims = _select_informative_dims(baseline_embeddings)
 
@@ -52,13 +56,26 @@ def compute_drift_report(
 
     n_drifted = sum(1 for r in ks_results.values() if r["drifted"])
     pct_drifted = n_drifted / len(dims)
-    psi_length = compute_psi(np.array(baseline_lengths, dtype=float), np.array(current_lengths, dtype=float))
+
+    # KS test on query lengths — more reliable than PSI at small sample sizes
+    ks_len_stat, ks_len_p = ks_2samp(
+        np.array(baseline_lengths, dtype=float),
+        np.array(current_lengths, dtype=float),
+    )
+    # PSI kept for logging; not used as an alert signal
+    psi_length = compute_psi(
+        np.array(baseline_lengths, dtype=float),
+        np.array(current_lengths, dtype=float),
+    )
 
     return {
         "n_dims_tested": len(dims),
         "n_dims_drifted": n_drifted,
         "pct_dims_drifted": round(pct_drifted, 4),
+        "ks_length_stat": round(float(ks_len_stat), 4),
+        "ks_length_p_value": round(float(ks_len_p), 4),
+        "ks_length_drifted": bool(ks_len_p < 0.05),
         "psi_query_length": round(psi_length, 4),
-        "drift_alert": pct_drifted > 0.30 or psi_length > 0.25,
+        "drift_alert": pct_drifted > 0.15 or ks_len_p < 0.05,
         "ks_details": {str(k): v for k, v in ks_results.items()},
     }

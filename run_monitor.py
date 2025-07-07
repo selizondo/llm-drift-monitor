@@ -102,6 +102,8 @@ def main() -> None:
 
         metrics = {
             "pct_dims_drifted": drift_report["pct_dims_drifted"],
+            "ks_length_p_value": drift_report["ks_length_p_value"],
+            "ks_length_drifted": drift_report["ks_length_drifted"],
             "psi_query_length": drift_report["psi_query_length"],
             "centroid_drift": centroid_d,
             "avg_quality_score": quality["avg_quality_score"],

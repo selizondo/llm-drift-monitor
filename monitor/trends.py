@@ -6,11 +6,18 @@ PSI > 0.25 and KS > 30% drifted dims are industry standard starting points.
 """
 
 THRESHOLDS = {
-    "pct_dims_drifted": 0.30,   # >30% of tested embedding dims drifted
-    "psi_query_length": 0.25,   # PSI on query word count
-    "centroid_drift": 0.05,     # cosine distance from baseline centroid
-    "avg_quality_score": 2.0,   # below 2.0/3.0 (was 1-5 in eval harness; this is 1-3)
-    "hallucination_rate": 0.30, # >30% of sampled answers flagged
+    # >15% of tested embedding dims drifted (KS p<0.05 per dim)
+    # Calibrated from observed data: in-distribution batches score 0%, OOD batches 15-25%
+    "pct_dims_drifted": 0.15,
+    # KS test on query word count — p<0.05 means length distribution shifted
+    # More reliable than PSI at n=50 per batch (PSI is designed for large samples)
+    "ks_length_p_value": 0.05,
+    # Cosine distance from baseline embedding centroid
+    # In-distribution variance: 0.00–0.19; OOD batches: 0.54–0.60
+    # Threshold 0.30 leaves clear margin on both sides
+    "centroid_drift": 0.30,
+    "avg_quality_score": 2.0,   # below 2.0/3.0
+    "hallucination_rate": 0.30,
 }
 
 
@@ -22,10 +29,10 @@ def check_thresholds(metrics: dict) -> dict:
             f"pct_dims_drifted={metrics['pct_dims_drifted']:.0%} "
             f"(threshold {THRESHOLDS['pct_dims_drifted']:.0%})"
         )
-    if metrics.get("psi_query_length", 0) > THRESHOLDS["psi_query_length"]:
+    if metrics.get("ks_length_p_value", 1.0) < THRESHOLDS["ks_length_p_value"]:
         alerts["length_drift"] = (
-            f"psi_query_length={metrics['psi_query_length']:.3f} "
-            f"(threshold {THRESHOLDS['psi_query_length']})"
+            f"ks_length_p={metrics['ks_length_p_value']:.4f} "
+            f"(KS test: query length distribution shifted, p<{THRESHOLDS['ks_length_p_value']})"
         )
     if metrics.get("centroid_drift", 0) > THRESHOLDS["centroid_drift"]:
         alerts["centroid_drift"] = (
@@ -50,7 +57,7 @@ def summarize_batch(batch_num: int, metrics: dict, alerts: dict) -> str:
     lines = [f"Batch {batch_num:02d} [{status}]"]
     lines.append(
         f"  drift  : {metrics.get('pct_dims_drifted', 0):.0%} dims | "
-        f"PSI={metrics.get('psi_query_length', 0):.3f} | "
+        f"len_p={metrics.get('ks_length_p_value', 1.0):.3f} | "
         f"centroid={metrics.get('centroid_drift', 0):.4f}"
     )
     lines.append(

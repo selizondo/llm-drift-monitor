@@ -29,7 +29,7 @@ from monitor import embeddings as emb_module
 from monitor import logger as mlf_logger
 from monitor import dashboard as wb_dashboard
 from monitor.drift import compute_drift_report
-from monitor.quality import score_batch_sample
+from monitor.quality import score_batch_sample, retrieval_quality_score
 from monitor.trends import check_thresholds, summarize_batch
 
 BATCHES_DIR = Path("data/batches")
@@ -95,10 +95,13 @@ def main() -> None:
         )
         drift_report["centroid_drift"] = round(centroid_d, 4)
 
+        # Retrieval quality — always computed, no API calls needed
+        retrieval = retrieval_quality_score(queries, emb_module)
+
+        # LLM judge quality — optional, requires ANTHROPIC_API_KEY
+        llm_quality = {"avg_quality_score": 0.0, "hallucination_rate": 0.0, "n_sampled": 0}
         if client:
-            quality = score_batch_sample(queries, client, emb_module, args.quality_sample)
-        else:
-            quality = {"avg_quality_score": 0.0, "hallucination_rate": 0.0, "n_sampled": 0}
+            llm_quality = score_batch_sample(queries, client, emb_module, args.quality_sample)
 
         metrics = {
             "pct_dims_drifted": drift_report["pct_dims_drifted"],
@@ -106,8 +109,10 @@ def main() -> None:
             "ks_length_drifted": drift_report["ks_length_drifted"],
             "psi_query_length": drift_report["psi_query_length"],
             "centroid_drift": centroid_d,
-            "avg_quality_score": quality["avg_quality_score"],
-            "hallucination_rate": quality["hallucination_rate"],
+            "avg_retrieval_sim": retrieval["avg_retrieval_sim"],
+            "retrieval_miss_rate": retrieval["retrieval_miss_rate"],
+            "avg_quality_score": llm_quality["avg_quality_score"],
+            "hallucination_rate": llm_quality["hallucination_rate"],
         }
         alerts = check_thresholds(metrics)
 

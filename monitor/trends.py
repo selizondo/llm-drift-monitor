@@ -16,7 +16,12 @@ THRESHOLDS = {
     # In-distribution variance: 0.00–0.19; OOD batches: 0.54–0.60
     # Threshold 0.30 leaves clear margin on both sides
     "centroid_drift": 0.30,
-    "avg_quality_score": 2.0,   # below 2.0/3.0
+    # Avg cosine sim between query and best match in ML corpus
+    # In-distribution: ~0.5-0.7; OOD: ~0.1-0.3. Threshold 0.35 catches OOD.
+    "avg_retrieval_sim": 0.35,
+    # LLM judge score — only meaningful with larger sample sizes (n≥15)
+    # At n=5, each flag shifts rate by 20%; use for qualitative trends, not hard alerts
+    "avg_quality_score": 2.0,
     "hallucination_rate": 0.30,
 }
 
@@ -38,6 +43,11 @@ def check_thresholds(metrics: dict) -> dict:
         alerts["centroid_drift"] = (
             f"centroid_drift={metrics['centroid_drift']:.4f} "
             f"(threshold {THRESHOLDS['centroid_drift']})"
+        )
+    if 0 < metrics.get("avg_retrieval_sim", 1.0) < THRESHOLDS["avg_retrieval_sim"]:
+        alerts["retrieval_degraded"] = (
+            f"avg_retrieval_sim={metrics['avg_retrieval_sim']:.3f} "
+            f"(threshold {THRESHOLDS['avg_retrieval_sim']})"
         )
     if 0 < metrics.get("avg_quality_score", 3) < THRESHOLDS["avg_quality_score"]:
         alerts["quality_degraded"] = (
@@ -61,8 +71,13 @@ def summarize_batch(batch_num: int, metrics: dict, alerts: dict) -> str:
         f"centroid={metrics.get('centroid_drift', 0):.4f}"
     )
     lines.append(
-        f"  quality: score={metrics.get('avg_quality_score', 0):.2f}/3 | "
-        f"halluc={metrics.get('hallucination_rate', 0):.0%}"
+        f"  quality: retrieval_sim={metrics.get('avg_retrieval_sim', 0):.3f} | "
+        f"miss={metrics.get('retrieval_miss_rate', 0):.0%}"
+        + (
+            f" | llm_score={metrics.get('avg_quality_score', 0):.2f}/3"
+            if metrics.get("avg_quality_score", 0) > 0
+            else ""
+        )
     )
     for key, reason in alerts.items():
         lines.append(f"  ! {key}: {reason}")

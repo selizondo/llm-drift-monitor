@@ -1,15 +1,19 @@
 """
-quality.py — Per-batch output quality monitoring without ground-truth labels.
+quality.py — Per-batch quality monitoring using retrieval similarity as the primary signal.
 
-Approach:
-  1. Sample N queries from the batch.
-  2. Retrieve the most relevant case from the ML Q&A corpus (Project 04 eval cases)
-     using cosine similarity. Out-of-domain queries fail retrieval (sim < 0.3) → no context.
-  3. Generate an answer via claude-haiku-4-5 (with or without context).
-  4. Self-judge the answer on quality (1-3) and hallucination risk.
+Primary signal (always computed, no API calls):
+  retrieval_quality_score() — for each query, compute cosine similarity to best match
+  in the ML Q&A corpus. In-distribution queries score ~0.5-0.7; OOD queries score ~0.1-0.3.
+  This directly measures whether the system has relevant knowledge for incoming queries.
 
-The quality degradation is structural: OOD queries fail retrieval → model answers
-without grounding → judge scores drop. No simulation needed.
+Secondary signal (optional, requires ANTHROPIC_API_KEY):
+  score_batch_sample() — sample N queries, generate answers via claude-haiku-4-5,
+  self-judge quality (1-3) and hallucination risk. More realistic but noisier at small N.
+  Note: n=5 per batch produces noisy hallucination rates (each flag = 20%); increase
+  sample_size to 15+ for reliable signal in production.
+
+The retrieval similarity is the leading indicator. LLM quality scores lag because
+the model handles short OOD questions adequately even without retrieved context.
 """
 
 import json
@@ -21,8 +25,11 @@ from pathlib import Path
 import anthropic
 import numpy as np
 
+# Use lora-finetune training data as the retrieval corpus.
+# It's the same StackOverflow ML Q&A distribution as the batch queries, so
+# in-distribution queries score high similarity; OOD queries score low.
 CORPUS_PATH = (
-    Path(__file__).resolve().parent.parent.parent / "llm-eval-harness/evals/cases/rag_qa.jsonl"
+    Path(__file__).resolve().parent.parent.parent / "lora-finetune/data/train.jsonl"
 )
 
 JUDGE_PROMPT = """\
@@ -59,12 +66,19 @@ def _load_corpus() -> list[dict]:
     return _corpus_cache
 
 
+def _corpus_text(record: dict) -> str:
+    """Normalize corpus record to text — handles both rag_qa and lora-finetune formats."""
+    if "instruction" in record:
+        return record["instruction"] + " " + record.get("output", "")
+    return record.get("input", "") + " " + record.get("golden_answer", "")
+
+
 def _get_corpus_embeddings(emb_module) -> np.ndarray:
     global _corpus_emb_cache
     if _corpus_emb_cache is None:
         corpus = _load_corpus()
         if corpus:
-            texts = [c["input"] + " " + c["golden_answer"] for c in corpus]
+            texts = [_corpus_text(c) for c in corpus]
             _corpus_emb_cache = emb_module.embed_queries(texts)
         else:
             _corpus_emb_cache = np.array([])
@@ -82,7 +96,9 @@ def _retrieve_context(query: str, emb_module, sim_threshold: float = 0.30) -> st
     top_idx = int(np.argmax(sims))
     if float(sims[top_idx]) < sim_threshold:
         return ""
-    return corpus[top_idx]["golden_answer"][:500]
+    rec = corpus[top_idx]
+    answer = rec.get("output") or rec.get("golden_answer", "")
+    return answer[:500]
 
 
 def _call_haiku(client: anthropic.Anthropic, system: str, user: str) -> str:
@@ -94,6 +110,34 @@ def _call_haiku(client: anthropic.Anthropic, system: str, user: str) -> str:
         messages=[{"role": "user", "content": user}],
     )
     return resp.content[0].text.strip()
+
+
+def retrieval_quality_score(queries: list[str], emb_module) -> dict:
+    """
+    Measure retrieval quality for each query: cosine similarity to best match in ML corpus.
+
+    In-distribution (ML Q&A) queries: ~0.5-0.7 similarity → retrieval succeeds.
+    OOD queries: ~0.1-0.3 similarity → retrieval misses, model answers without context.
+
+    No API calls. Deterministic. Scales to full batch (not just a sample).
+    """
+    corpus = _load_corpus()
+    corpus_embs = _get_corpus_embeddings(emb_module)
+    if len(corpus) == 0 or corpus_embs.size == 0:
+        return {"avg_retrieval_sim": 0.0, "retrieval_miss_rate": 0.0}
+
+    batch_embs = emb_module.embed_queries(queries)
+    sims = []
+    for qe in batch_embs:
+        norms = np.linalg.norm(corpus_embs, axis=1) * np.linalg.norm(qe) + 1e-9
+        cos_sims = np.dot(corpus_embs, qe) / norms
+        sims.append(float(np.max(cos_sims)))
+
+    miss_rate = sum(1 for s in sims if s < 0.30) / len(sims)
+    return {
+        "avg_retrieval_sim": round(float(np.mean(sims)), 4),
+        "retrieval_miss_rate": round(miss_rate, 4),
+    }
 
 
 def score_batch_sample(

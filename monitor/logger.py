@@ -39,6 +39,8 @@ def log_batch(batch_num: int, metrics: dict, alerts: dict, drift_report: dict) -
             "pct_dims_drifted": metrics.get("pct_dims_drifted", 0),
             "psi_query_length": metrics.get("psi_query_length", 0),
             "centroid_drift": metrics.get("centroid_drift", 0),
+            "avg_retrieval_sim": metrics.get("avg_retrieval_sim", 0),
+            "retrieval_miss_rate": metrics.get("retrieval_miss_rate", 0),
             "avg_quality_score": metrics.get("avg_quality_score", 0),
             "hallucination_rate": metrics.get("hallucination_rate", 0),
             "n_alerts": len(alerts),

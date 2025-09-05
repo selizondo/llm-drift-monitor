@@ -13,6 +13,11 @@ Both signals fire in batches 6-8 (OOD queries are longer and semantically distan
 import numpy as np
 from scipy.stats import ks_2samp
 
+# Top-N embedding dimensions by variance. All-MiniLM-L6-v2 has 384 dims;
+# the top-20 carry the most distributional signal with far less noise than testing all 384.
+# 20 is calibrated on the simulated stream — re-tune if embedding model changes.
+N_INFORMATIVE_DIMS = 20
+
 
 def compute_psi(baseline: np.ndarray, current: np.ndarray, bins: int = 10) -> float:
     """Population Stability Index. Uses baseline bin edges for comparability."""
@@ -23,7 +28,7 @@ def compute_psi(baseline: np.ndarray, current: np.ndarray, bins: int = 10) -> fl
     return float(np.sum((current_pct - baseline_pct) * np.log(current_pct / baseline_pct)))
 
 
-def _select_informative_dims(baseline_embeddings: np.ndarray, n: int = 20) -> list[int]:
+def _select_informative_dims(baseline_embeddings: np.ndarray, n: int = N_INFORMATIVE_DIMS) -> list[int]:
     """Pick the n dimensions with highest variance — they carry the most distributional signal."""
     variances = baseline_embeddings.var(axis=0)
     return np.argsort(variances)[-n:].tolist()

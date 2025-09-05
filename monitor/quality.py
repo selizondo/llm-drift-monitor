@@ -20,6 +20,7 @@ import json
 import os
 import random
 import re
+import sys
 from pathlib import Path
 
 import anthropic
@@ -31,6 +32,12 @@ import numpy as np
 CORPUS_PATH = (
     Path(__file__).resolve().parent.parent.parent / "lora-finetune/data/train.jsonl"
 )
+
+# Minimum cosine similarity required to return a retrieved context chunk.
+# In-distribution queries score ~0.5-0.7; OOD queries score ~0.1-0.3.
+# 0.30 is the midpoint of the OOD range — below it, no context is more honest than bad context.
+# Must match THRESHOLDS["avg_retrieval_sim"] in trends.py to avoid split-brain threshold logic.
+SIM_THRESHOLD = 0.30
 
 JUDGE_PROMPT = """\
 Rate this Q&A pair. Return ONLY the JSON — no other text.
@@ -85,7 +92,7 @@ def _get_corpus_embeddings(emb_module) -> np.ndarray:
     return _corpus_emb_cache
 
 
-def _retrieve_context(query: str, emb_module, sim_threshold: float = 0.30) -> str:
+def _retrieve_context(query: str, emb_module, sim_threshold: float = SIM_THRESHOLD) -> str:
     corpus = _load_corpus()
     corpus_embs = _get_corpus_embeddings(emb_module)
     if len(corpus) == 0 or corpus_embs.size == 0:
@@ -133,7 +140,7 @@ def retrieval_quality_score(queries: list[str], emb_module) -> dict:
         cos_sims = np.dot(corpus_embs, qe) / norms
         sims.append(float(np.max(cos_sims)))
 
-    miss_rate = sum(1 for s in sims if s < 0.30) / len(sims)
+    miss_rate = sum(1 for s in sims if s < SIM_THRESHOLD) / len(sims)
     return {
         "avg_retrieval_sim": round(float(np.mean(sims)), 4),
         "retrieval_miss_rate": round(miss_rate, 4),
@@ -145,11 +152,16 @@ def score_batch_sample(
     client: anthropic.Anthropic,
     emb_module,
     sample_size: int = 5,
+    seed: int | None = None,
 ) -> dict:
     """
     Sample queries from a batch, generate answers, judge quality.
     Returns avg_quality_score (1-3), hallucination_rate (0-1), n_sampled.
+
+    Pass seed for reproducible sampling — important when debugging why a batch alerted.
     """
+    if seed is not None:
+        random.seed(seed)
     sampled = random.sample(queries, min(sample_size, len(queries)))
     quality_scores: list[float] = []
     halluc_flags: list[int] = []
@@ -184,7 +196,10 @@ def score_batch_sample(
             else:
                 quality_scores.append(2.0)
                 halluc_flags.append(0)
-        except Exception:
+        except Exception as e:
+            # Log the failure so callers can distinguish API errors from genuine scores.
+            # Append neutral score (2.0) to keep batch statistics valid rather than skipping.
+            print(f"[quality] judge call failed for query '{query[:60]}...': {e}", file=sys.stderr)
             quality_scores.append(2.0)
             halluc_flags.append(0)
 

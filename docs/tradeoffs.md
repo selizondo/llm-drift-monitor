@@ -83,6 +83,54 @@ Decisions made during build, with the reasoning and scale/complexity boundaries.
 
 ---
 
+## SLO Framework for LLM Monitoring Services
+
+Applying the SLI/SLO/SLA pattern to this drift detection pipeline explicitly — not just documenting scale limits but defining what "working correctly" means and when to page.
+
+### Service Level Indicators (SLIs)
+
+| Signal | Indicator | Type |
+|---|---|---|
+| Embedding drift | KS statistic on top-20 dims per batch | Leading |
+| Semantic drift | Cosine distance of batch centroid from baseline | Leading |
+| Retrieval quality | Mean retrieval similarity score per batch | Leading |
+| Output quality | Average LLM judge score (n≥15 per batch) | Lagging |
+| Hallucination rate | Fraction of responses flagged per batch (n≥15) | Lagging |
+| Monitor latency | Time from batch arrival to alert emission | Operational |
+
+### Service Level Objectives (SLOs)
+
+| SLI | Target | Window |
+|---|---|---|
+| KS stat (embedding) | < 0.3 at p < 0.05 for 95% of batches | Rolling 7-day |
+| Centroid cosine dist | < 0.3 for 95% of batches | Rolling 7-day |
+| Retrieval similarity | ≥ 0.35 mean for 90% of batches | Rolling 7-day |
+| Monitor latency | Alert emitted within 2 batches of threshold breach | Per-breach |
+| MLflow write success | 100% of completed batches logged | Cumulative |
+
+### Burn Rate Alert Design
+
+At hourly batch cadence, the 7-day error budget = 168 batches × 5% = 8.4 allowed failures.
+
+- **Fast burn alert (2x rate):** If 4+ failures occur in 1 hour (consuming 50% of budget), page immediately
+- **Slow burn alert (sustained):** If 6+ failures occur in 24 hours, escalate to on-call review
+- **Leading indicator advantage:** Embedding drift fires 2–3 batches before retrieval quality drops — creates a buffer to investigate before SLO breach
+
+### Golden Signals for This Pipeline
+
+| Signal | ML Translation |
+|---|---|
+| Latency | Time from `run_batch()` call to `check_thresholds()` completion |
+| Traffic | Batch arrival rate (batches/hour); sample size per batch (n) |
+| Errors | MLflow write failures, W&B API errors, embedding model unavailable |
+| Saturation | Baseline array size vs. available RAM; embedding model queue depth |
+
+### What This Framework Enables at Org Scale
+
+This SLO design is a reusable template. Any team shipping an LLM pipeline can adopt the same SLI taxonomy (leading embedding signals, lagging quality signals) and calibrate their own thresholds from observed in-distribution data. The MLflow/W&B ownership split — audit vs. live alerting — is the architectural decision that makes this framework operationally durable rather than a one-off dashboard.
+
+---
+
 ## What Was Cut
 
 | Cut | Reason | Upgrade trigger |

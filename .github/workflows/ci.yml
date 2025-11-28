@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install scipy numpy mlflow
+
+      - name: Syntax check — monitor package
+        run: |
+          python -m py_compile monitor/__init__.py
+          python -m py_compile monitor/drift.py
+          python -m py_compile monitor/embeddings.py
+          python -m py_compile monitor/quality.py
+          python -m py_compile monitor/trends.py
+          python -m py_compile monitor/logger.py
+          python -m py_compile monitor/dashboard.py
+
+      - name: Syntax check — scripts (stdlib only)
+        run: |
+          python -m py_compile scripts/slo_designer.py
+          python -m py_compile scripts/alert_optimizer.py
+          python -m py_compile scripts/dashboard_generator.py
+
+      - name: Syntax check — entrypoint and data
+        run: |
+          python -m py_compile run_monitor.py
+          python -m py_compile data/simulate_stream.py
+
+      - name: Import validation — pure stdlib scripts
+        run: |
+          python scripts/slo_designer.py --help
+          python scripts/alert_optimizer.py --help
+          python scripts/dashboard_generator.py --help
+
+      - name: Smoke test — slo_designer output
+        run: python3 scripts/slo_designer.py | grep "SLO SPECIFICATION"
+
+      - name: Smoke test — alert_optimizer demo mode
+        run: python3 scripts/alert_optimizer.py --demo | grep "ALERT THRESHOLD OPTIMIZER"
+
+      - name: Smoke test — dashboard_generator json
+        run: python3 scripts/dashboard_generator.py --format json | python3 -c "import json,sys; d=json.load(sys.stdin); assert len(d['sections'])==3"
+
+      - name: Secrets scan
+        run: |
+          if grep -rn "sk-[a-zA-Z0-9]\{20,\}" --include="*.py" .; then
+            echo "Possible API key found — remove before committing" && exit 1
+          fi
+          if grep -rn "ANTHROPIC_API_KEY\s*=\s*['\"]sk-" --include="*.py" .; then
+            echo "Hardcoded Anthropic key found" && exit 1
+          fi
+          echo "Secrets scan passed"

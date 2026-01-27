@@ -59,15 +59,17 @@ Decisions made during build, with the reasoning and scale/complexity boundaries.
 
 ---
 
-## LLM Judge Alerts Disabled at n=5
+## LLM Judge Alerts Disabled at n=5 (Statistical Significance)
 
-**Decision:** `check_thresholds()` does not fire alerts on `avg_quality_score` or `hallucination_rate`. Both are logged to MLflow and W&B for trend visualization.
+**Decision:** `check_thresholds()` does not fire alerts on `avg_quality_score` or `hallucination_rate` when `n_sampled < 15`. Both are logged to MLflow and W&B for trend visualization regardless of sample size.
 
 **Why:** At n=5 queries per batch, each hallucination flag shifts the rate by 20%. A single outlier response produces `hallucination_rate = 0.20` — indistinguishable from genuine degradation. Hard alerts at n=5 would fire constantly on noise.
 
+The default `sample_size=5` in `score_batch_sample` is intentional for the demo: it keeps API cost low and latency fast. It is not a statistical choice — it is a cost/latency choice.
+
 **Tradeoff:** Genuine quality degradation in the LLM output goes undetected unless retrieval similarity also drops. The assumption is that retrieval similarity is a reliable proxy — if the model lacks relevant context, quality will degrade. This is a documented assumption, not a guarantee.
 
-**Scale boundary:** At n≥15 per batch, hallucination rate variance drops enough (each flag = 6.7% shift) to use as an alert signal. Wire `check_thresholds()` to generate `quality_degraded` and `hallucination_spike` keys when `sample_size >= 15`.
+**Scale boundary (production):** At n≥15 per batch, each hallucination flag shifts the rate by 6.7% — reliable enough for hard alerting. `check_thresholds(metrics, llm_judge_enabled=True)` generates `quality_degraded` and `hallucination_spike` keys only when `n_sampled >= 15`. Pass `--quality-sample 15` (or higher) to `run_monitor.py` to enable LLM judge alerts.
 
 ---
 
@@ -79,7 +81,7 @@ Decisions made during build, with the reasoning and scale/complexity boundaries.
 
 **Tradeoff:** Path resolves only in the monorepo layout. Cloning `llm-drift-monitor` independently breaks `CORPUS_PATH.exists()` — `_load_corpus()` silently returns empty list → all retrieval scores are 0.0 with no diagnostic.
 
-**Fix (planned):** Log a startup warning if `CORPUS_PATH.exists()` is False.
+**Fix (applied):** `quality.py` logs a `logger.warning` at import time if `CORPUS_PATH` does not exist. Non-fatal — the monitor continues with retrieval scores of 0.0. Configure Python logging to surface this (e.g., `logging.basicConfig(level=logging.WARNING)` in your entry point).
 
 ---
 

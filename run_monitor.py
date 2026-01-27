@@ -19,9 +19,12 @@ Prerequisites:
 
 import argparse
 import json
+import logging
 import os
 import sys
 from pathlib import Path
+
+logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
 
 import numpy as np
 
@@ -113,8 +116,9 @@ def main() -> None:
             "retrieval_miss_rate": retrieval["retrieval_miss_rate"],
             "avg_quality_score": llm_quality["avg_quality_score"],
             "hallucination_rate": llm_quality["hallucination_rate"],
+            "n_sampled": llm_quality["n_sampled"],
         }
-        alerts = check_thresholds(metrics)
+        alerts = check_thresholds(metrics, llm_judge_enabled=client is not None)
 
         mlf_logger.log_batch(batch_num, metrics, alerts, drift_report)
         if not args.no_wandb:

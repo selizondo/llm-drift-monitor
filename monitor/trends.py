@@ -26,8 +26,15 @@ THRESHOLDS = {
 }
 
 
-def check_thresholds(metrics: dict) -> dict:
-    """Return dict of fired alerts (key → human-readable reason). Empty = all clear."""
+def check_thresholds(metrics: dict, llm_judge_enabled: bool = False) -> dict:
+    """
+    Return dict of fired alerts (key → human-readable reason). Empty = all clear.
+
+    LLM judge alert keys (quality_degraded, hallucination_spike) are only generated when:
+      - llm_judge_enabled=True (caller ran score_batch_sample with an API client), AND
+      - metrics["n_sampled"] >= 15 (sufficient sample for statistical reliability)
+    At n=5, each hallucination flag shifts the rate by 20% — too noisy for hard alerts.
+    """
     alerts = {}
     if metrics.get("pct_dims_drifted", 0) > THRESHOLDS["pct_dims_drifted"]:
         alerts["embedding_drift"] = (
@@ -49,8 +56,19 @@ def check_thresholds(metrics: dict) -> dict:
             f"avg_retrieval_sim={metrics['avg_retrieval_sim']:.3f} "
             f"(threshold {THRESHOLDS['avg_retrieval_sim']})"
         )
-    # LLM judge alerts disabled: too noisy at n=5 per batch (each flag = 20% rate change).
-    # Scores are logged to MLflow/W&B for trend visualization; use n≥15 for hard alerting.
+    # LLM judge alerts: only fire when caller explicitly enables them AND n≥15.
+    # n_sampled < 15: each flag shifts rate by >6.7% — false positive risk too high.
+    if llm_judge_enabled and metrics.get("n_sampled", 0) >= 15:
+        if metrics.get("avg_quality_score", 3.0) < THRESHOLDS["avg_quality_score"]:
+            alerts["quality_degraded"] = (
+                f"avg_quality_score={metrics['avg_quality_score']:.2f} "
+                f"(threshold {THRESHOLDS['avg_quality_score']}, n={metrics['n_sampled']})"
+            )
+        if metrics.get("hallucination_rate", 0) > THRESHOLDS["hallucination_rate"]:
+            alerts["hallucination_spike"] = (
+                f"hallucination_rate={metrics['hallucination_rate']:.0%} "
+                f"(threshold {THRESHOLDS['hallucination_rate']:.0%}, n={metrics['n_sampled']})"
+            )
     return alerts
 
 

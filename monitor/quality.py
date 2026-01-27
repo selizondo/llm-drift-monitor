@@ -17,6 +17,7 @@ the model handles short OOD questions adequately even without retrieved context.
 """
 
 import json
+import logging
 import os
 import random
 import re
@@ -26,12 +27,23 @@ from pathlib import Path
 import anthropic
 import numpy as np
 
+logger = logging.getLogger(__name__)
+
 # Use lora-finetune training data as the retrieval corpus.
 # It's the same StackOverflow ML Q&A distribution as the batch queries, so
 # in-distribution queries score high similarity; OOD queries score low.
 CORPUS_PATH = (
     Path(__file__).resolve().parent.parent.parent / "lora-finetune/data/train.jsonl"
 )
+
+# Warn at import time so the operator sees it before the first batch runs.
+# Non-fatal: the monitor continues with retrieval scores of 0.0.
+if not CORPUS_PATH.exists():
+    logger.warning(
+        "CORPUS_PATH %s does not exist — retrieval quality scores will be 0.0. "
+        "Clone lora-finetune alongside llm-drift-monitor or set a valid corpus path.",
+        CORPUS_PATH,
+    )
 
 # Minimum cosine similarity required to return a retrieved context chunk.
 # In-distribution queries score ~0.5-0.7; OOD queries score ~0.1-0.3.
@@ -159,6 +171,12 @@ def score_batch_sample(
     Returns avg_quality_score (1-3), hallucination_rate (0-1), n_sampled.
 
     Pass seed for reproducible sampling — important when debugging why a batch alerted.
+
+    sample_size=5 is intentional for the demo: it keeps API cost low and latency fast.
+    At n=5 each hallucination flag shifts the rate by 20% — too noisy for hard alerts.
+    For production alerting (check_thresholds quality_degraded / hallucination_spike),
+    use sample_size >= 15: each flag shifts the rate by 6.7%, which is a reliable signal.
+    See docs/tradeoffs.md — "LLM Judge Alerts Disabled at n=5".
     """
     if seed is not None:
         random.seed(seed)

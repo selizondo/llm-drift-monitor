@@ -36,9 +36,11 @@ def log_batch(batch_num: int, metrics: dict, alerts: dict) -> None:
         "alerts/embedding_drift": int("embedding_drift" in alerts),
         "alerts/length_drift": int("length_drift" in alerts),
         "alerts/centroid_drift": int("centroid_drift" in alerts),
-        # quality_degraded and hallucination_spike are intentionally omitted:
-        # check_thresholds() disables LLM judge alerting at n=5 (too noisy).
-        # Add these back when sample_size >= 15 and thresholds are re-enabled.
+        # quality_degraded / hallucination_spike are only present when check_thresholds()
+        # is called with llm_judge_enabled=True and n_sampled >= 15. Log as 0 otherwise
+        # so the W&B time series stays continuous (no gaps in the alert lines).
+        "alerts/quality_degraded": int("quality_degraded" in alerts),
+        "alerts/hallucination_spike": int("hallucination_spike" in alerts),
     })
     wandb.log(payload)
 

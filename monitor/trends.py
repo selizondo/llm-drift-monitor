@@ -5,24 +5,26 @@ Thresholds are intentionally conservative for the demo — tune for your product
 PSI > 0.25 and KS > 30% drifted dims are industry standard starting points.
 """
 
+import os
+
 THRESHOLDS = {
     # >15% of tested embedding dims drifted (KS p<0.05 per dim)
     # Calibrated from observed data: in-distribution batches score 0%, OOD batches 15-25%
-    "pct_dims_drifted": 0.15,
+    "pct_dims_drifted": float(os.getenv("THRESHOLD_PCT_DIMS_DRIFTED", "0.15")),
     # KS test on query word count — p<0.05 means length distribution shifted
     # More reliable than PSI at n=50 per batch (PSI is designed for large samples)
-    "ks_length_p_value": 0.05,
+    "ks_length_p_value": float(os.getenv("THRESHOLD_KS_LENGTH_P_VALUE", "0.05")),
     # Cosine distance from baseline embedding centroid
     # In-distribution variance: 0.00–0.19; OOD batches: 0.54–0.60
     # Threshold 0.30 leaves clear margin on both sides
-    "centroid_drift": 0.30,
+    "centroid_drift": float(os.getenv("THRESHOLD_CENTROID_DRIFT", "0.30")),
     # Avg cosine sim between query and best match in ML corpus
     # In-distribution: ~0.5-0.7; OOD: ~0.1-0.3. Threshold 0.35 catches OOD.
-    "avg_retrieval_sim": 0.35,
+    "avg_retrieval_sim": float(os.getenv("THRESHOLD_AVG_RETRIEVAL_SIM", "0.35")),
     # LLM judge score — only meaningful with larger sample sizes (n≥15)
     # At n=5, each flag shifts rate by 20%; use for qualitative trends, not hard alerts
-    "avg_quality_score": 2.0,
-    "hallucination_rate": 0.30,
+    "avg_quality_score": float(os.getenv("THRESHOLD_AVG_QUALITY_SCORE", "2.0")),
+    "hallucination_rate": float(os.getenv("THRESHOLD_HALLUCINATION_RATE", "0.30")),
 }
 
 

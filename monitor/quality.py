@@ -6,11 +6,15 @@ Primary signal (always computed, no API calls):
   in the ML Q&A corpus. In-distribution queries score ~0.5-0.7; OOD queries score ~0.1-0.3.
   This directly measures whether the system has relevant knowledge for incoming queries.
 
-Secondary signal (optional, requires ANTHROPIC_API_KEY):
-  score_batch_sample() — sample N queries, generate answers via claude-haiku-4-5,
-  self-judge quality (1-3) and hallucination risk. More realistic but noisier at small N.
+Secondary signal (optional, requires ANTHROPIC_API_KEY or local Ollama):
+  score_batch_sample() — sample N queries, generate answers, self-judge quality (1-3)
+  and hallucination risk. More realistic but noisier at small N.
   Note: n=5 per batch produces noisy hallucination rates (each flag = 20%); increase
   sample_size to 15+ for reliable signal in production.
+
+  Backends (pass exactly one):
+    client=anthropic.Anthropic(...)  — Haiku via Anthropic API (requires API key)
+    ollama_model="llama3.2"          — local Ollama (no API key needed)
 
 The retrieval similarity is the leading indicator. LLM quality scores lag because
 the model handles short OOD questions adequately even without retrieved context.
@@ -120,6 +124,9 @@ def _retrieve_context(query: str, emb_module, sim_threshold: float = SIM_THRESHO
     return answer[:500]
 
 
+_OLLAMA_QUALITY_URL = os.getenv("OLLAMA_QUALITY_URL", "http://localhost:11434/api/generate")
+
+
 def _call_haiku(client: anthropic.Anthropic, system: str, user: str) -> str:
     resp = client.messages.create(
         model="claude-haiku-4-5",
@@ -129,6 +136,24 @@ def _call_haiku(client: anthropic.Anthropic, system: str, user: str) -> str:
         messages=[{"role": "user", "content": user}],
     )
     return resp.content[0].text.strip()
+
+
+def _call_ollama_quality(ollama_model: str, system: str, user: str) -> str:
+    """
+    HTTP call to local Ollama for quality scoring.
+
+    WHY no streaming: quality scoring calls return short JSON (< 50 tokens).
+        stream=False is simpler and adds negligible latency for short outputs.
+    """
+    import requests
+    payload = {
+        "model": ollama_model,
+        "prompt": f"{system}\n\n{user}",
+        "stream": False,
+    }
+    resp = requests.post(_OLLAMA_QUALITY_URL, json=payload, timeout=60)
+    resp.raise_for_status()
+    return resp.json()["response"].strip()
 
 
 def retrieval_quality_score(queries: list[str], emb_module) -> dict:
@@ -161,10 +186,11 @@ def retrieval_quality_score(queries: list[str], emb_module) -> dict:
 
 def score_batch_sample(
     queries: list[str],
-    client: anthropic.Anthropic,
     emb_module,
     sample_size: int = 5,
     seed: int | None = None,
+    client: anthropic.Anthropic | None = None,
+    ollama_model: str | None = None,
 ) -> dict:
     """
     Sample queries from a batch, generate answers, judge quality.
@@ -172,12 +198,25 @@ def score_batch_sample(
 
     Pass seed for reproducible sampling — important when debugging why a batch alerted.
 
+    Exactly one of client or ollama_model must be provided:
+        client=anthropic.Anthropic(...)  — Haiku via Anthropic API (requires API key)
+        ollama_model="llama3.2"          — local Ollama, no API key required
+
+    WHY two separate parameters instead of a backend string:
+        The Anthropic client is heavyweight (connection pool, retries); Ollama is a
+        plain HTTP call. Keeping them as separate optional parameters avoids creating
+        a client object in the Ollama path, and lets callers pass a pre-warmed client
+        for the Anthropic path without changing the interface.
+
     sample_size=5 is intentional for the demo: it keeps API cost low and latency fast.
     At n=5 each hallucination flag shifts the rate by 20% — too noisy for hard alerts.
     For production alerting (check_thresholds quality_degraded / hallucination_spike),
     use sample_size >= 15: each flag shifts the rate by 6.7%, which is a reliable signal.
     See docs/tradeoffs.md — "LLM Judge Alerts Disabled at n=5".
     """
+    if client is None and ollama_model is None:
+        raise ValueError("score_batch_sample requires either client (Anthropic) or ollama_model (Ollama)")
+
     if seed is not None:
         random.seed(seed)
     sampled = random.sample(queries, min(sample_size, len(queries)))
@@ -192,20 +231,36 @@ def score_batch_sample(
             else f"Question: {query}"
         )
         try:
-            answer = _call_haiku(
-                client,
-                "You are an ML/AI assistant. Answer clearly using the context if relevant.",
-                user_msg,
-            )
-            judge_raw = _call_haiku(
-                client,
-                "You are a strict evaluator. Return only valid JSON.",
-                JUDGE_PROMPT.format(
-                    question=query[:300],
-                    context=context[:200] if context else "none retrieved",
-                    answer=answer[:400],
-                ),
-            )
+            if client is not None:
+                answer = _call_haiku(
+                    client,
+                    "You are an ML/AI assistant. Answer clearly using the context if relevant.",
+                    user_msg,
+                )
+                judge_raw = _call_haiku(
+                    client,
+                    "You are a strict evaluator. Return only valid JSON.",
+                    JUDGE_PROMPT.format(
+                        question=query[:300],
+                        context=context[:200] if context else "none retrieved",
+                        answer=answer[:400],
+                    ),
+                )
+            else:
+                answer = _call_ollama_quality(
+                    ollama_model,
+                    "You are an ML/AI assistant. Answer clearly using the context if relevant.",
+                    user_msg,
+                )
+                judge_raw = _call_ollama_quality(
+                    ollama_model,
+                    "You are a strict evaluator. Return only valid JSON.",
+                    JUDGE_PROMPT.format(
+                        question=query[:300],
+                        context=context[:200] if context else "none retrieved",
+                        answer=answer[:400],
+                    ),
+                )
             m = re.search(r"\{.*?\}", judge_raw, re.DOTALL)
             if m:
                 scores = json.loads(m.group())

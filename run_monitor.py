@@ -5,15 +5,16 @@ Loads batches from data/batches/, computes drift + quality signals per batch,
 logs everything to MLflow (audit trail) and W&B (live dashboard).
 
 Usage:
-    python run_monitor.py                        # full run, all 10 batches
-    python run_monitor.py --batches 10 --no-quality   # skip API calls (faster)
-    python run_monitor.py --no-wandb             # MLflow only
-    python run_monitor.py --quality-sample 3     # sample 3 queries per batch for quality
+    python run_monitor.py                              # full run, all 10 batches
+    python run_monitor.py --batches 10 --no-quality    # skip LLM quality scoring
+    python run_monitor.py --no-wandb                   # MLflow only
+    python run_monitor.py --quality-sample 3           # sample 3 queries per batch
+    python run_monitor.py --ollama-quality llama3.2    # Ollama backend (no API key)
 
 Prerequisites:
     pip install -r requirements.txt
     python data/simulate_stream.py       # generates data/batches/
-    export ANTHROPIC_API_KEY=...         # required unless --no-quality
+    export ANTHROPIC_API_KEY=...         # required unless --no-quality or --ollama-quality
     export WANDB_API_KEY=...             # required unless --no-wandb
 """
 
@@ -56,6 +57,15 @@ def main() -> None:
     parser.add_argument("--quality-sample", type=int, default=5, help="Queries sampled per batch for quality scoring")
     parser.add_argument("--no-wandb", action="store_true", help="Skip W&B logging")
     parser.add_argument("--no-quality", action="store_true", help="Skip quality scoring (no API calls)")
+    parser.add_argument(
+        "--ollama-quality",
+        metavar="MODEL",
+        default=None,
+        help=(
+            "Use a local Ollama model for quality scoring instead of Anthropic (e.g. llama3.2). "
+            "No ANTHROPIC_API_KEY required. Requires Ollama running at localhost:11434."
+        ),
+    )
     args = parser.parse_args()
 
     # -- Setup --
@@ -64,13 +74,24 @@ def main() -> None:
     if not args.no_wandb:
         wb_dashboard.init_run()
 
-    if not args.no_quality and not os.environ.get("ANTHROPIC_API_KEY"):
-        sys.exit("ANTHROPIC_API_KEY not set. Use --no-quality to skip quality scoring.")
+    # Quality backend: Anthropic (default) or Ollama (--ollama-quality MODEL).
+    # WHY separate from --no-quality: --ollama-quality enables quality scoring
+    # without an API key; --no-quality disables it entirely regardless of backend.
+    anthropic_client = None
+    ollama_quality_model: str | None = None
 
-    client = None
     if not args.no_quality:
-        import anthropic
-        client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        if args.ollama_quality:
+            ollama_quality_model = args.ollama_quality
+        elif os.environ.get("ANTHROPIC_API_KEY"):
+            import anthropic
+            anthropic_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        else:
+            sys.exit(
+                "ANTHROPIC_API_KEY not set. "
+                "Use --no-quality to skip quality scoring, "
+                "or --ollama-quality MODEL to use a local Ollama model."
+            )
 
     # -- Baseline (batch 1) --
     print("Building baseline from batch 1...")
@@ -101,10 +122,16 @@ def main() -> None:
         # Retrieval quality — always computed, no API calls needed
         retrieval = retrieval_quality_score(queries, emb_module)
 
-        # LLM judge quality — optional, requires ANTHROPIC_API_KEY
+        # LLM judge quality — optional, requires Anthropic API key or local Ollama
         llm_quality = {"avg_quality_score": 0.0, "hallucination_rate": 0.0, "n_sampled": 0}
-        if client:
-            llm_quality = score_batch_sample(queries, client, emb_module, args.quality_sample)
+        if anthropic_client or ollama_quality_model:
+            llm_quality = score_batch_sample(
+                queries,
+                emb_module,
+                sample_size=args.quality_sample,
+                client=anthropic_client,
+                ollama_model=ollama_quality_model,
+            )
 
         metrics = {
             "pct_dims_drifted": drift_report["pct_dims_drifted"],
@@ -118,7 +145,7 @@ def main() -> None:
             "hallucination_rate": llm_quality["hallucination_rate"],
             "n_sampled": llm_quality["n_sampled"],
         }
-        alerts = check_thresholds(metrics, llm_judge_enabled=client is not None)
+        alerts = check_thresholds(metrics, llm_judge_enabled=bool(anthropic_client or ollama_quality_model))
 
         mlf_logger.log_batch(batch_num, metrics, alerts, drift_report)
         if not args.no_wandb:

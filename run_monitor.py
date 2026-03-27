@@ -38,6 +38,10 @@ from monitor.trends import check_thresholds, summarize_batch
 
 BATCHES_DIR = Path("data/batches")
 
+# Corpus version tag — bump when embedding model or corpus changes so runs are
+# comparable. Surfaced in the JSON summary so consumers can detect version drift.
+CORPUS_VERSION = os.getenv("CORPUS_VERSION", "v1")
+
 
 def load_batch(batch_num: int) -> list[dict]:
     path = BATCHES_DIR / f"batch_{batch_num:02d}.jsonl"
@@ -106,6 +110,7 @@ def main() -> None:
     print("-" * 62)
 
     # -- Monitoring loop --
+    all_alerts: list[dict] = []
     for batch_num in range(1, args.batches + 1):
         records = load_batch(batch_num)
         queries = [r["query"] for r in records]
@@ -147,6 +152,9 @@ def main() -> None:
         }
         alerts = check_thresholds(metrics, llm_judge_enabled=bool(anthropic_client or ollama_quality_model))
 
+        if alerts:
+            all_alerts.append({"batch": batch_num, "alerts": alerts})
+
         mlf_logger.log_batch(batch_num, metrics, alerts, drift_report)
         if not args.no_wandb:
             wb_dashboard.log_batch(batch_num, metrics, alerts)
@@ -163,6 +171,19 @@ def main() -> None:
     if not args.no_wandb:
         entity = os.environ.get("WANDB_ENTITY", "<your-entity>")
         print(f"W&B     : https://wandb.ai/{entity}/llm-drift-monitor")
+
+    # -- JSON summary (structured output for downstream consumers / CI) --
+    # Writes triggered_alerts to a JSON file so CI scripts and eval harnesses can
+    # consume the run summary without parsing stdout or connecting to MLflow/W&B.
+    summary_path = Path("artifacts/run_summary.json")
+    summary_path.parent.mkdir(exist_ok=True)
+    summary_path.write_text(json.dumps({
+        "corpus_version": CORPUS_VERSION,
+        "batches_processed": args.batches,
+        "triggered_alerts": all_alerts,
+        "judge_backend": "ollama" if args.ollama_quality else ("anthropic" if not args.no_quality else "none"),
+    }, indent=2))
+    print(f"Summary : {summary_path}")
 
 
 if __name__ == "__main__":

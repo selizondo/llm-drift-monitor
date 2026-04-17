@@ -187,6 +187,14 @@ llm-drift-monitor/
 
 ---
 
+## Architectural Standard
+
+The design decision here — separating audit from alerting into two tools with a documented ownership boundary — means any team can stand up production ML observability in a day rather than reinventing the split from scratch. The MLflow + W&B split isn't a personal preference; it's a reusable pattern: one tool owns the immutable audit trail, one tool owns live alerting, and the boundary is documented in [ADR-01](docs/adr-01-tool-split.md) so the next team that asks "should we use both?" has a written answer instead of a debate.
+
+The leading-indicator design (KS drift fires at batch 6; quality scores drop at batch 8) is the key insight: PSI and KS are signals you can act on before users are affected; accuracy is a lagging indicator you discover after. Any monitoring system that only tracks accuracy is reactive by design. The boundary between proactive and reactive monitoring is the threshold tuning methodology — documented here, not left as tribal knowledge.
+
+---
+
 ## Connection to Portfolio
 
 | Project | How this extends it |

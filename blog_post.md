@@ -100,7 +100,7 @@ This is the constraint you design around, not paper over. The fix for production
 
 The quality scores drop in batches 6–8 because OOD queries fail retrieval structurally — cosine similarity against the ML corpus drops below 0.30 on manufacturing/finance/healthcare queries — so the LLM generates without grounded context and the judge scores drop. No hardcoded score manipulation.
 
-This matters for the portfolio story: the system isn't demonstrating a fabricated degradation. The degradation emerges from the system behaving correctly. It just wasn't built for those queries.
+This matters: the system isn't demonstrating a fabricated degradation. The degradation emerges from the system behaving correctly. It just wasn't built for those queries.
 
 ---
 

@@ -3,7 +3,7 @@
 Continuous monitoring layer for LLM pipelines. Detects when input distribution, embedding semantics, or output quality shift over time — and surfaces the signal before it becomes a user-facing problem.
 
 **Stack:** Python · sentence-transformers · scipy · MLflow · Weights & Biases · Anthropic API  
-**Data:** ML Q&A from [lora-finetune](../lora-finetune/) — no new dataset, no downloads  
+**Data:** ML Q&A from [lora-finetune](https://github.com/selizondo/lora-finetune) — no new dataset, no downloads  
 **GPU required:** No
 
 ---

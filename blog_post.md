@@ -136,8 +136,8 @@ Without embedding drift monitoring, step 4 happens after a user complaint. With 
 
 | Project | Role |
 |---|---|
-| [llm-eval-harness](../llm-eval-harness) | Catches regressions between releases — quality changes between versions |
+| [llm-eval-harness](https://github.com/selizondo/llm-eval-harness) | Catches regressions between releases — quality changes between versions |
 | This project | Catches degradation between releases — quality changes in production over time |
-| [rag-pipeline-app](../rag-pipeline-app) | The system being monitored — OOD queries fail its retrieval structurally |
+| [rag-pipeline-app](https://github.com/selizondo/rag-pipeline-app) | The system being monitored — OOD queries fail its retrieval structurally |
 
 The eval harness and the drift monitor are complementary. The harness runs before a deploy. The drift monitor runs after. Together they close the loop: nothing ships that fails eval, and nothing degrades silently once it's live.

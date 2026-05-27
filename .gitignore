@@ -6,3 +6,4 @@ wandb/
 data/batches/
 mlflow.db
 CLAUDE.md
+.vscode/

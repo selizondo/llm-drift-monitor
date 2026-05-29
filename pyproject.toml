@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "llm-drift-monitor"
+version = "0.1.0"
+description = "LLM drift detection — KS test on embeddings, MLflow + W&B dual observability"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=0.49",
+    "sentence-transformers>=3.0",
+    "scipy>=1.13",
+    "numpy>=1.26",
+    "mlflow>=2.14",
+    "wandb>=0.17",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.9",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["monitor", "data"]
+
+[tool.uv]
+constraint-dependencies = [
+    "torch<2.3 ; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "transformers<5 ; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "sentence-transformers<4 ; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "numpy<2 ; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

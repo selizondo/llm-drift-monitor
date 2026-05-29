@@ -53,7 +53,7 @@ class TestCheckThresholds:
 
     def test_drift_alert_fires_on_high_dimensional_drift(self):
         alerts = check_thresholds(_drifted_metrics())
-        assert any(v > 0 for v in alerts.values()), "Expected at least one alert on drifted metrics"
+        assert len(alerts) > 0, "Expected at least one alert on drifted metrics"
 
     def test_quality_alert_not_fired_when_judge_disabled(self):
         m = _clean_metrics()

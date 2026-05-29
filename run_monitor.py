@@ -29,11 +29,11 @@ logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(mes
 
 import numpy as np
 
+from monitor import dashboard as wb_dashboard
 from monitor import embeddings as emb_module
 from monitor import logger as mlf_logger
-from monitor import dashboard as wb_dashboard
 from monitor.drift import compute_drift_report
-from monitor.quality import score_batch_sample, retrieval_quality_score
+from monitor.quality import retrieval_quality_score, score_batch_sample
 from monitor.trends import check_thresholds, summarize_batch
 
 BATCHES_DIR = Path("data/batches")
@@ -167,7 +167,7 @@ def main() -> None:
         wb_dashboard.finish()
 
     print("-" * 62)
-    print(f"MLflow  : run `mlflow ui` then open http://127.0.0.1:5000")
+    print("MLflow  : run `mlflow ui` then open http://127.0.0.1:5000")
     if not args.no_wandb:
         entity = os.environ.get("WANDB_ENTITY", "<your-entity>")
         print(f"W&B     : https://wandb.ai/{entity}/llm-drift-monitor")

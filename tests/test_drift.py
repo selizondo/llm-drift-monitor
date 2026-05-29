@@ -8,14 +8,14 @@ Coverage:
   - N_INFORMATIVE_DIMS constant: correct type and range
 """
 
-import numpy as np
-import pytest
-
-import sys
 import os
+import sys
+
+import numpy as np
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from monitor.drift import compute_psi, compute_drift_report, N_INFORMATIVE_DIMS
+from monitor.drift import N_INFORMATIVE_DIMS, compute_drift_report, compute_psi
 
 
 class TestComputePsi:

@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime
 
 
@@ -69,7 +69,7 @@ def build_llm_monitoring_slos(service: str, target: float, window: int, batch_ca
         generated_at=datetime.now().strftime("%Y-%m-%d"),
     )
 
-    batches_per_window = int((window * 24) / batch_cadence_h)
+    _batches_per_window = int((window * 24) / batch_cadence_h)
 
     slos = [
         SLO(
@@ -158,7 +158,7 @@ def print_spec(spec: SLOSpec) -> None:
         print(f"  Target:     {slo.target_pct:.1f}% over {slo.window_days} days")
         print(f"  Error budget: {eb:.1f}%  ({eb * slo.window_days * 24 / 100:.1f} hours in window)")
         print(f"  Rationale:  {slo.rationale}")
-        print(f"  Burn rate alerts:")
+        print("  Burn rate alerts:")
         print(f"    Fast burn: >{burns['fast_burn_multiplier']}x rate → page now "
               f"(window: {burns['fast_burn_window_h']}h)")
         print(f"    Slow burn: >{burns['slow_burn_multiplier']}x rate → ticket "

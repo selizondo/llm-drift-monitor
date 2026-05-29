@@ -8,8 +8,9 @@ Coverage:
   - summarize_batch: returns a non-empty string with batch number
 """
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from monitor.trends import check_thresholds, summarize_batch

@@ -1,5 +1,7 @@
 # LLM Production Monitoring: Drift Detection for AI Systems
 
+![Tests](https://github.com/selizondo/llm-drift-monitor/actions/workflows/test.yml/badge.svg)
+
 Continuous monitoring layer for LLM pipelines. Detects when input distribution, embedding semantics, or output quality shift over time — and surfaces the signal before it becomes a user-facing problem.
 
 **Stack:** Python · sentence-transformers · scipy · MLflow · Weights & Biases · Anthropic API  

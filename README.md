@@ -10,6 +10,22 @@ Continuous monitoring layer for LLM pipelines. Detects when input distribution, 
 
 ---
 
+## Key Concepts
+
+**Drift (distribution shift):** When the statistical properties of input data change over time. Three types: (1) covariate shift — input features change but labels stay stable; (2) concept drift — labels change (e.g., "good answer" definition shifts); (3) output drift — model predictions change as a side effect of upstream changes.
+
+**KS test (Kolmogorov-Smirnov test):** A statistical test that compares two distributions. Given baseline embedding dimensions and new-batch dimensions, it returns a p-value: p < 0.05 means the distributions are significantly different. This project runs KS on the top-20 most informative embedding dimensions (by variance) to detect semantic shift.
+
+**Covariate shift vs. concept drift:** Covariate shift is when the input distribution changes but the input-output relationship stays stable (e.g., users now ask about LLMs instead of classic ML, but "quality answer" is still well-defined). Concept drift is when the relationship itself changes (e.g., answers that ranked 5/5 a month ago now rank 3/5). This system detects both via embedding drift + output quality drift.
+
+**OOD (out-of-distribution):** Input data that differs significantly from the training distribution. In this project, OOD queries are injected deliberately into batches 6–8 to simulate domain shift (manufacturing, finance, healthcare questions mixed into ML Q&A). The monitor should detect OOD batches via KS and quality drops.
+
+**Centroid drift:** The average embedding vector shifts over time. If the centroid of batch-1 queries is at [0.1, 0.2, ...] and batch-10 is at [0.3, 0.5, ...], the cosine distance measures how far apart they are. Large shifts can indicate topic or audience change.
+
+**PSI (Population Stability Index):** A metric that compares the distribution of a categorical variable (e.g., query word count bins) between baseline and current batch. PSI > 0.1 signals moderate shift; PSI > 0.25 signals high shift. Complements KS test — PSI for coarse binned features, KS for continuous embeddings.
+
+---
+
 ## The Problem
 
 An LLM system that passes eval today can degrade silently:

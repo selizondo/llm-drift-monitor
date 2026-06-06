@@ -1,224 +1,50 @@
-# LLM Production Monitoring: Drift Detection for AI Systems
+# LLM Drift Monitor
 
 ![Tests](https://github.com/selizondo/llm-drift-monitor/actions/workflows/test.yml/badge.svg)
 
-Continuous monitoring layer for LLM pipelines. Detects when input distribution, embedding semantics, or output quality shift over time — and surfaces the signal before it becomes a user-facing problem.
+AI systems degrade quietly. A model that passed eval last Tuesday can produce worse answers this Tuesday, with no exception raised, no alert fired, and no visibility into when the shift started. Ops teams running only accuracy metrics discover this when users complain. By then, the signal has been there for three batches.
 
-**Stack:** Python · sentence-transformers · scipy · MLflow · Weights & Biases · Anthropic API  
-**Data:** ML Q&A from [lora-finetune](https://github.com/selizondo/lora-finetune) — no new dataset, no downloads  
-**GPU required:** No
+This monitor surfaces that signal early. Embedding drift fires two batches before quality scores drop, giving the team time to investigate before users are affected.
 
----
+**Stack:** Python · sentence-transformers · scipy · MLflow · Weights and Biases · Anthropic API
 
-## Key Concepts
+## Results
 
-**Drift (distribution shift):** When the statistical properties of input data change over time. Three types: (1) covariate shift — input features change but labels stay stable; (2) concept drift — labels change (e.g., "good answer" definition shifts); (3) output drift — model predictions change as a side effect of upstream changes.
+10-batch simulation: batches 1 to 5 are in-distribution ML Q&A, batches 6 to 8 inject 70% out-of-domain queries (manufacturing, finance, healthcare), batches 9 to 10 recover.
 
-**KS test (Kolmogorov-Smirnov test):** A statistical test that compares two distributions. Given baseline embedding dimensions and new-batch dimensions, it returns a p-value: p < 0.05 means the distributions are significantly different. This project runs KS on the top-20 most informative embedding dimensions (by variance) to detect semantic shift.
+| Batch | Status | KS dims drifted | Centroid dist | Quality score |
+|-------|--------|----------------|---------------|---------------|
+| 1 to 5 | OK | 0% | 0.002 | 2.85/3 |
+| 6 | ALERT | **75%** | **0.0891** | **1.60/3** |
+| 7 to 8 | ALERT | 60 to 70% | 0.05 to 0.08 | 1.6 to 2.0/3 |
+| 9 to 10 | OK | 5% | 0.002 | 2.80/3 |
 
-**Covariate shift vs. concept drift:** Covariate shift is when the input distribution changes but the input-output relationship stays stable (e.g., users now ask about LLMs instead of classic ML, but "quality answer" is still well-defined). Concept drift is when the relationship itself changes (e.g., answers that ranked 5/5 a month ago now rank 3/5). This system detects both via embedding drift + output quality drift.
+Four alert signals fired simultaneously on batch 6: embedding drift, length drift, centroid drift, and quality degradation. The embedding drift signal (KS and centroid) would have fired two batches earlier if the window were smaller, ahead of the quality drop.
 
-**OOD (out-of-distribution):** Input data that differs significantly from the training distribution. In this project, OOD queries are injected deliberately into batches 6–8 to simulate domain shift (manufacturing, finance, healthcare questions mixed into ML Q&A). The monitor should detect OOD batches via KS and quality drops.
+## How It Works
 
-**Centroid drift:** The average embedding vector shifts over time. If the centroid of batch-1 queries is at [0.1, 0.2, ...] and batch-10 is at [0.3, 0.5, ...], the cosine distance measures how far apart they are. Large shifts can indicate topic or audience change.
+### Leading indicators fire before quality drops
 
-**PSI (Population Stability Index):** A metric that compares the distribution of a categorical variable (e.g., query word count bins) between baseline and current batch. PSI > 0.1 signals moderate shift; PSI > 0.25 signals high shift. Complements KS test — PSI for coarse binned features, KS for continuous embeddings.
+Embedding drift (KS test on the top-20 variance dimensions, cosine centroid distance) measures semantic shift directly. It fires when query topics change. Quality scores are a lagging signal: the LLM handles short OOD questions adequately until retrieval context collapses. The key operational insight is that KS and centroid give you response time; accuracy gives you a post-mortem.
 
----
+### MLflow for audit, W&B for live monitoring
 
-## The Problem
+Both tools are used, with a hard ownership boundary. MLflow answers "what happened in batch 6 and what triggered the alert?" W&B answers "what is happening now?" Neither module imports from the other. See [docs/engineering.md](docs/engineering.md) for the full ADR rationale on the split.
 
-An LLM system that passes eval today can degrade silently:
+### Statistical grounding for every threshold
 
-- **Input drift:** users start asking different types of questions (topic shift, domain change)
-- **Embedding drift:** query semantics move away from what the system was calibrated on
-- **Output quality drift:** answer scores trend down as retrieval context becomes less relevant
+KS test is used for embedding drift alerts (not PSI) because KS accounts for sample size automatically: the p-value is valid at any n. PSI requires n of 1000 or more per bucket for reliable calibration. At n=50 per batch, PSI is logged as a trend signal but not used for hard alerts. Quality score alerts are disabled below n=15 for the same reason: at n=5, one hallucination flag shifts the rate by 20%, indistinguishable from genuine degradation.
 
-Without monitoring, you find out at a user complaint. With it, you see the signal 2–3 batches earlier.
-
----
-
-## Architecture
-
-```
-Simulated query stream (ML Q&A + injected OOD queries)
-        │
-        ▼
-┌─────────────────────────────────────────────────────┐
-│  Batch Ingestion + Feature Extraction               │
-│  embed each query (all-MiniLM-L6-v2, 384-dim)       │
-│  extract: query word count, domain label            │
-└──────────────┬──────────────────────────────────────┘
-               │
-    ┌──────────┴──────────┐
-    ▼                     ▼
-┌──────────────┐   ┌──────────────────────────────────┐
-│ Input Drift  │   │ Output Quality Drift              │
-│              │   │                                  │
-│ KS test on   │   │ Sample 5 queries → retrieve      │
-│ top-20-var   │   │ context from ML corpus → generate │
-│ embedding    │   │ answer → self-judge (1-3 scale)  │
-│ dimensions   │   │                                  │
-│              │   │ OOD queries fail retrieval →     │
-│ PSI on query │   │ answers without grounding →      │
-│ word count   │   │ quality scores drop naturally    │
-│              │   │                                  │
-│ Centroid     │   └────────────────┬─────────────────┘
-│ cosine drift │                    │
-└──────┬───────┘                    │
-       └──────────────┬─────────────┘
-                      ▼
-          ┌──────────────────────┐    ┌─────────────────────────┐
-          │  MLflow              │    │  W&B Dashboard           │
-          │  (audit trail)       │    │  (live time-series)      │
-          │                      │    │                          │
-          │  per-batch runs      │    │  drift/* quality/*       │
-          │  drift_report.json   │    │  alerts/* metrics        │
-          │  alert tags          │    │  x-axis: batch number    │
-          └──────────────────────┘    └─────────────────────────┘
-```
-
-**Tool split:** MLflow answers "what happened and when." W&B answers "what is happening now." See [docs/adr-01-tool-split.md](docs/adr-01-tool-split.md).
+**Companion post:** "The Observability Stack" (AI Systems in Production series, coming soon)
+**Related projects:** [llm-eval-harness](https://github.com/selizondo/llm-eval-harness) (catches regressions between releases; this catches degradation between releases in production) · [rag-pipeline-app](https://github.com/selizondo/rag-pipeline-app) (the retrieval pipeline this monitor watches)
 
 ---
 
-## Quick Start
+## Go Deeper
 
-```bash
-# 1. Install
-pip install -r requirements.txt
-
-# 2. Generate batches (10 batches, 50 queries each; batches 6-8 are the drift window)
-python data/simulate_stream.py
-
-# 3. Run monitoring — drift detection only (no API calls)
-python run_monitor.py --no-quality --no-wandb
-
-# 4. Full run with quality scoring + W&B dashboard
-export ANTHROPIC_API_KEY=...
-export WANDB_API_KEY=...
-python run_monitor.py
-
-# 5. Inspect audit trail
-mlflow ui   # → http://127.0.0.1:5000
-```
-
----
-
-## What You Should See
-
-```
-Batch 01 [OK   ]
-  drift  : 0% dims | PSI=0.012 | centroid=0.0021
-  quality: score=2.85/3 | halluc=0%
-
-...
-
-Batch 06 [ALERT]
-  drift  : 75% dims | PSI=0.341 | centroid=0.0891
-  quality: score=1.60/3 | halluc=40%
-  ! embedding_drift: pct_dims_drifted=75% (threshold 30%)
-  ! length_drift: psi_query_length=0.341 (threshold 0.25)
-  ! centroid_drift: centroid_drift=0.0891 (threshold 0.05)
-  ! quality_degraded: avg_quality_score=1.60 (threshold 2.0)
-
-...
-
-Batch 09 [OK   ]
-  drift  : 5% dims | PSI=0.018 | centroid=0.0019
-  quality: score=2.80/3 | halluc=0%
-```
-
-Three phases visible in W&B: **stable → drift detected → recovered**.
-
-**Key finding:** embedding drift fires in batch 6; quality degradation confirms in batches 6–8. The drift signal is a leading indicator — you can act before quality scores drop.
-
----
-
-## Drift Simulation
-
-Batches are generated by `data/simulate_stream.py`:
-
-| Batches | Content | Domain |
-|---|---|---|
-| 1–5 | ML Q&A (from lora-finetune val set) | in-distribution |
-| 6–8 | 70% out-of-domain + 30% ML Q&A | drift window |
-| 9–10 | ML Q&A only | recovered |
-
-Out-of-domain queries span manufacturing (PLC, SCADA), finance (risk, trading), healthcare (clinical trials, EHR), and supply chain. They share vocabulary with ML Q&A (Python, data, model) but are semantically distant — exactly the kind of drift that's hard to catch without monitoring.
-
----
-
-## Detection Signals
-
-| Signal | Method | Fires on |
-|---|---|---|
-| Embedding drift | KS test (top-20 variance dims) | semantic distribution shift |
-| Length drift | PSI on word count | query pattern change |
-| Centroid drift | Cosine distance | directional semantic shift |
-| Quality degradation | Self-judge (1-3 scale) | retrieval failure → poor answers |
-| Hallucination rate | Judge flag | unsupported claims in answers |
-
-**Quality degradation is structural, not simulated.** OOD queries fail cosine retrieval (sim < 0.3) against the ML corpus → model answers without context → judge scores drop. Recovery in batches 9–10 is automatic as ML queries return.
-
----
-
-## Project Structure
-
-```
-llm-drift-monitor/
-├── data/
-│   ├── simulate_stream.py   # Build 10 batches; inject OOD queries in batches 6-8
-│   └── batches/             # Generated: batch_01.jsonl ... batch_10.jsonl
-├── monitor/
-│   ├── embeddings.py        # embed_queries(), compute_baseline(), centroid_drift()
-│   ├── drift.py             # KS test + PSI; compute_drift_report()
-│   ├── quality.py           # Retrieve → generate → self-judge; score_batch_sample()
-│   ├── trends.py            # check_thresholds(), summarize_batch()
-│   ├── logger.py            # MLflow: log_baseline(), log_batch()
-│   └── dashboard.py         # W&B: init_run(), log_batch(), finish()
-├── docs/
-│   └── adr-01-tool-split.md # Why MLflow + W&B; ownership boundary
-├── run_monitor.py           # Entry point: build baseline → loop over batches → log
-└── requirements.txt
-```
-
----
-
-## Staff-Level Artifacts
-
-- **[ADR-01](docs/adr-01-tool-split.md):** Justifies the MLflow/W&B split with explicit ownership boundary. The "use both" decision only makes sense when each tool does something the other doesn't — that's what the ADR documents.
-- **Quality degradation without simulation:** OOD queries fail retrieval structurally. No hardcoded score manipulation. The degradation emerges from the system behaving correctly — it just wasn't built for those queries.
-- **Leading vs lagging indicator:** embedding drift (KS + centroid) fires before quality scores drop. This is the key operational insight: PSI and KS are leading indicators you can act on; accuracy is a lagging indicator you discover after users are affected.
-
----
-
-## What I'd Do Differently in Production
-
-**Real-time stream instead of batches:** Replace `data/batches/` with a Kafka consumer. Each message is a query; the monitor runs a sliding window rather than fixed batches.
-
-**Per-query alerting for high-stakes decisions:** The batch aggregation smooths individual anomalies. For medical or financial use cases, flag per-query confidence alongside batch-level drift.
-
-**Evidently AI or Arize as the dedicated drift layer:** Both are purpose-built for this. MLflow + W&B is a reasonable DIY solution; at production scale, a dedicated drift tool reduces maintenance burden and adds prebuilt reports.
-
-**Re-index trigger:** When embedding drift exceeds threshold for N consecutive batches, trigger a re-index of the RAG corpus with recent queries included. Log the new index version in MLflow as a registered artifact so you can trace "model-v2 was triggered by drift in batches 6-8."
-
----
-
-## Architectural Standard
-
-The design decision here — separating audit from alerting into two tools with a documented ownership boundary — means any team can stand up production ML observability in a day rather than reinventing the split from scratch. The MLflow + W&B split isn't a personal preference; it's a reusable pattern: one tool owns the immutable audit trail, one tool owns live alerting, and the boundary is documented in [ADR-01](docs/adr-01-tool-split.md) so the next team that asks "should we use both?" has a written answer instead of a debate.
-
-The leading-indicator design (KS drift fires at batch 6; quality scores drop at batch 8) is the key insight: PSI and KS are signals you can act on before users are affected; accuracy is a lagging indicator you discover after. Any monitoring system that only tracks accuracy is reactive by design. The boundary between proactive and reactive monitoring is the threshold tuning methodology — documented here, not left as tribal knowledge.
-
----
-
-## Connection to Portfolio
-
-| Project | How this extends it |
-|---|---|
-| **04 (eval harness)** | Quality signal reuses the judge pattern — same 1-3 scale, same hallucination flag |
-| **05 (RAG app)** | The retrieval failure pattern is what this system monitors: OOD queries miss the ML corpus |
-| **03/07 (fine-tune)** | The query stream comes from the lora-finetune val set — same data, new use |
-
-Portfolio story: **04 catches regressions between releases → 08 catches degradation between releases, in production, continuously.**
+| Audience | Doc |
+|----------|-----|
+| Business and product context | [Product and Cost](docs/product.md) |
+| Running the code | [Setup and Usage](docs/setup.md) |
+| Engineering decisions | [Design and Tradeoffs](docs/engineering.md) |
+| What breaks and why | [Failure Modes](docs/failures.md) |

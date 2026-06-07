@@ -1,5 +1,19 @@
 # Setup and Usage
 
+## Key Concepts
+
+**Embedding drift (KS test):** Kolmogorov-Smirnov test on the top-20 variance dimensions of query embeddings. Detects semantic distribution shift. Accounts for sample size automatically: p-value is valid at any n. KS fires on batch 6 when topics shift from ML Q&A to manufacturing/finance/healthcare; fires **before** quality scores drop (batch 6 vs batch 8), giving ops time to investigate.
+
+**Centroid drift:** Cosine distance between the query embedding centroid of the current batch and the baseline (batches 1-5). Directional semantic shift: even if individual queries embed fine, their centroid can drift. Measured 0.002 in-distribution, 0.0891 out-of-distribution.
+
+**Leading vs lagging signals:** Embedding drift (KS + centroid) fires first. Quality scores are a lagging signal: LLMs handle short OOD questions okay until retrieval context collapses. Operational insight: embedding drift gives you response time; accuracy gives you a post-mortem.
+
+**MLflow for audit, W&B for live monitoring:** Separate concerns, separate tools. MLflow answers "what happened in batch 6?" (diffs, diffs, rollback decisions). W&B answers "what is happening now?" (live dashboard, alert thresholds). No cross-importing between modules — clean ownership boundary.
+
+**Statistical grounding for thresholds:** KS and centroid metrics are threshold-based. Why KS over PSI? PSI requires n≥1000 per bucket; KS is valid at any n. Quality alerts disable below n=15: at n=5, one hallucination flag shifts the rate by 20%, indistinguishable from genuine degradation.
+
+---
+
 ## Prerequisites
 
 - Python 3.10+

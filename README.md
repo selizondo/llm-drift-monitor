@@ -8,6 +8,15 @@ This monitor surfaces that signal early. Embedding drift fires two batches befor
 
 **Stack:** Python · sentence-transformers · scipy · MLflow · Weights and Biases · Anthropic API
 
+## Related Projects
+
+1. [llm-eval-harness](https://github.com/selizondo/llm-eval-harness) — catches regressions between releases; this catches degradation in production
+2. [rag-pipeline-app](https://github.com/selizondo/rag-pipeline-app) — retrieval pipeline this monitor watches
+
+*Companion post: [The Observability Stack](docs/blog_post.md) — AI Systems in Production series, coming soon*
+
+---
+
 ## Results
 
 10-batch simulation: batches 1 to 5 are in-distribution ML Q&A, batches 6 to 8 inject 70% out-of-domain queries (manufacturing, finance, healthcare), batches 9 to 10 recover.
@@ -34,11 +43,6 @@ Both tools are used, with a hard ownership boundary. MLflow answers "what happen
 ### Statistical grounding for every threshold
 
 KS test is used for embedding drift alerts (not PSI) because KS accounts for sample size automatically: the p-value is valid at any n. PSI requires n of 1000 or more per bucket for reliable calibration. At n=50 per batch, PSI is logged as a trend signal but not used for hard alerts. Quality score alerts are disabled below n=15 for the same reason: at n=5, one hallucination flag shifts the rate by 20%, indistinguishable from genuine degradation.
-
-**Companion post:** "The Observability Stack" (AI Systems in Production series, coming soon)
-**Related projects:** [llm-eval-harness](https://github.com/selizondo/llm-eval-harness) (catches regressions between releases; this catches degradation between releases in production) · [rag-pipeline-app](https://github.com/selizondo/rag-pipeline-app) (the retrieval pipeline this monitor watches)
-
----
 
 ## Go Deeper
 

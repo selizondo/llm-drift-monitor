@@ -1,4 +1,13 @@
 repos:
+  - repo: local
+    hooks:
+      - id: validate-ci-matrix
+        name: Validate CI matrix vs requires-python
+        entry: validate-ci-matrix
+        language: system
+        pass_filenames: false
+        always_run: true
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.9.10
     hooks:
